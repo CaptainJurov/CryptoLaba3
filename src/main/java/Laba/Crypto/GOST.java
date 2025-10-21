@@ -1,102 +1,109 @@
 package Laba.Crypto;
-import Laba.Main;
 
 import java.io.*;
 import java.math.BigInteger;
-import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.Random;
 
-public class GOST implements Serializable {
-    private transient BigInteger p, q, a, x, y;
-    private transient Random random = new Random();
+public class GOST {
+    private static final Random random = new Random();
 
-    public static class SignatureResult implements Serializable {
-        public BigInteger r;
-        public BigInteger s;
-        public BigInteger p;
-        public BigInteger q;
-        public BigInteger a;
-        public BigInteger y;
+    public static class SystemParams implements Serializable {
+        public final BigInteger p;
+        public final BigInteger q;
+        public final BigInteger a;
 
-        public SignatureResult(BigInteger r, BigInteger s, BigInteger p,
-                               BigInteger q, BigInteger a, BigInteger y) {
-            this.r = r;
-            this.s = s;
+        public SystemParams(BigInteger p, BigInteger q, BigInteger a) {
             this.p = p;
             this.q = q;
             this.a = a;
-            this.y = y;
         }
     }
 
-    public GOST() {
-        generateKeys();
+    public static class KeyPair implements Serializable {
+        public final BigInteger privateKey;
+        public final BigInteger publicKey;
+        public final SystemParams params;
+
+        public KeyPair(BigInteger privateKey, BigInteger publicKey, SystemParams params) {
+            this.privateKey = privateKey;
+            this.publicKey = publicKey;
+            this.params = params;
+        }
     }
 
-    private void generateKeys() {
-        q = BigInteger.probablePrime(256, random);
-        p = q.multiply(new BigInteger("2")).add(BigInteger.ONE);
+    public static class Signature implements Serializable {
+        public final BigInteger r;
+        public final BigInteger s;
+
+        public Signature(BigInteger r, BigInteger s) {
+            this.r = r;
+            this.s = s;
+        }
+    }
+
+    // Генерация параметров системы
+    public static SystemParams generateSystemParams() {
+        BigInteger q = BigInteger.probablePrime(256, random);
+        BigInteger p = q.multiply(BigInteger.valueOf(2)).add(BigInteger.ONE);
+
         while (!p.isProbablePrime(100)) {
             q = BigInteger.probablePrime(256, random);
-            p = q.multiply(new BigInteger("2")).add(BigInteger.ONE);
+            p = q.multiply(BigInteger.valueOf(2)).add(BigInteger.ONE);
         }
 
-        a = new BigInteger("2").modPow(p.subtract(BigInteger.ONE).divide(q), p);
-        x = new BigInteger(255, random);
-        y = a.modPow(x, p);
-
-        System.out.println(Main.RED + "🇷🇺 Параметры ГОСТ установлены - российские стандарты самые строгие!" + Main.RESET);
+        BigInteger a = new BigInteger("2");
+        return new SystemParams(p, q, a);
     }
 
-    public SignatureResult signFile(File file) {
-        try {
-            byte[] fileData = Files.readAllBytes(file.toPath());
-            BigInteger h = new BigInteger(1, hash(fileData));
-            BigInteger k;
-            BigInteger r;
-            BigInteger s;
-
-            do {
-                k = new BigInteger(q.bitLength() - 1, random);
-                r = a.modPow(k, p).mod(q);
-                s = k.multiply(h).add(x.multiply(r)).mod(q);
-            } while (r.equals(BigInteger.ZERO) || s.equals(BigInteger.ZERO));
-
-            System.out.println(Main.WHITE + "✅ Подпись ГОСТ создана - соответствует всем стандартам РФ!" + Main.RESET);
-            return new SignatureResult(r, s, p, q, a, y);
-        } catch (Exception e) {
-            throw new RuntimeException("Ошибка подписи ГОСТ!", e);
-        }
+    // Генерация ключевой пары с заданными параметрами
+    public KeyPair generateKeyPair(SystemParams params) {
+        BigInteger privateKey = new BigInteger(255, random);
+        BigInteger publicKey = params.a.modPow(privateKey, params.p);
+        return new KeyPair(privateKey, publicKey, params);
     }
 
-    public boolean verifyFile(File file, SignatureResult signature) {
-        try {
-            if (signature.r.compareTo(BigInteger.ZERO) <= 0 ||
-                    signature.r.compareTo(signature.q) >= 0 ||
-                    signature.s.compareTo(BigInteger.ZERO) <= 0 ||
-                    signature.s.compareTo(signature.q) >= 0) {
-                return false;
-            }
+    // Подписание файла
+    public Signature signFile(File file, KeyPair keyPair) throws Exception {
+        byte[] fileData = java.nio.file.Files.readAllBytes(file.toPath());
+        BigInteger hash = new BigInteger(1, hash(fileData)).mod(keyPair.params.q);
 
-            byte[] fileData = Files.readAllBytes(file.toPath());
-            BigInteger h = new BigInteger(1, hash(fileData));
-            BigInteger v = h.modPow(signature.q.subtract(new BigInteger("2")), signature.q);
-            BigInteger z1 = signature.s.multiply(v).mod(signature.q);
-            BigInteger z2 = signature.q.subtract(signature.r).multiply(v).mod(signature.q);
-            BigInteger u = signature.a.modPow(z1, signature.p)
-                    .multiply(signature.y.modPow(z2, signature.p))
-                    .mod(signature.p)
-                    .mod(signature.q);
+        BigInteger k, r, s;
 
-            boolean valid = u.equals(signature.r);
-            System.out.println(valid ?
-                    Main.BLUE + "🇷🇺 Подпись ГОСТ верифицирована - российское качество подтверждено!" + Main.RESET :
-                    Main.RED + "⚠️ Подпись ГОСТ не прошла проверку - только лучшее для России!" + Main.RESET);
-            return valid;
-        } catch (Exception e) {
+        do {
+            k = new BigInteger(keyPair.params.q.bitLength() - 1, random);
+            r = keyPair.params.a.modPow(k, keyPair.params.p).mod(keyPair.params.q);
+            s = k.multiply(hash).add(keyPair.privateKey.multiply(r)).mod(keyPair.params.q);
+        } while (r.equals(BigInteger.ZERO) || s.equals(BigInteger.ZERO));
+
+        return new Signature(r, s);
+    }
+
+    // Проверка подписи
+    public boolean verifyFile(File file, Signature signature, KeyPair keyPair) throws Exception {
+        return verifyFile(file, signature, keyPair.publicKey, keyPair.params);
+    }
+
+    public boolean verifyFile(File file, Signature signature, BigInteger publicKey, SystemParams params) throws Exception {
+        byte[] fileData = java.nio.file.Files.readAllBytes(file.toPath());
+        BigInteger hash = new BigInteger(1, hash(fileData)).mod(params.q);
+
+        if (signature.r.compareTo(BigInteger.ZERO) <= 0 ||
+                signature.r.compareTo(params.q) >= 0 ||
+                signature.s.compareTo(BigInteger.ZERO) <= 0 ||
+                signature.s.compareTo(params.q) >= 0) {
             return false;
         }
+
+        BigInteger v = hash.modPow(params.q.subtract(BigInteger.valueOf(2)), params.q);
+        BigInteger z1 = signature.s.multiply(v).mod(params.q);
+        BigInteger z2 = params.q.subtract(signature.r).multiply(v).mod(params.q);
+        BigInteger u = params.a.modPow(z1, params.p)
+                .multiply(publicKey.modPow(z2, params.p))
+                .mod(params.p)
+                .mod(params.q);
+
+        return u.equals(signature.r);
     }
 
     private byte[] hash(byte[] message) throws Exception {

@@ -1,8 +1,8 @@
 package Laba;
-import Laba.Crypto.ElGamal;
-import Laba.Crypto.GOST;
-import Laba.Crypto.RSA;
 
+import Laba.Crypto.ElGamal;
+import Laba.Crypto.RSA;
+import Laba.Crypto.GOST;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -17,41 +17,61 @@ public class Main {
     public static final String RESET = "\u001B[0m";
 
     private static Scanner scanner = new Scanner(System.in);
+    private static final String KEY_NAME = "default";
 
     public static void main(String[] args) {
         printHeader();
 
         try {
-            System.out.println(WHITE + "═".repeat(50) + RESET);
-            System.out.println(GREEN + "🎯 ВЫБЕРИТЕ РЕЖИМ РАБОТЫ:" + RESET);
-            System.out.println(WHITE + "1. ✍️  СОЗДАНИЕ ПОДПИСИ");
-            System.out.println("2. 🔍 ПРОВЕРКА ПОДПИСИ");
-            System.out.print(YELLOW + "\nВведите номер режима: " + RESET);
+            while (true) {
+                System.out.println(WHITE + "═".repeat(50) + RESET);
+                System.out.println(GREEN + "🎯 ГЛАВНОЕ МЕНЮ:" + RESET);
+                System.out.println(WHITE + "1. ✍️  СОЗДАНИЕ КЛЮЧЕЙ И ПОДПИСИ");
+                System.out.println("2. 🔍 ПРОВЕРКА ПОДПИСИ");
+                System.out.println("3. 🔑 ТОЛЬКО ГЕНЕРАЦИЯ КЛЮЧЕЙ");
+                System.out.println("4. 🗑️  УДАЛИТЬ ВСЕ КЛЮЧИ И ПОДПИСИ");
+                System.out.println("0. 🚪 ВЫХОД");
+                System.out.print(YELLOW + "\nВведите номер команды: " + RESET);
 
-            int mode = scanner.nextInt();
-            scanner.nextLine(); // consume newline
+                int command = scanner.nextInt();
+                scanner.nextLine();
 
-            switch (mode) {
-                case 1:
-                    signatureMode();
-                    break;
-                case 2:
-                    verificationMode();
-                    break;
-                default:
-                    System.out.println(RED + "❌ Неверный выбор режима!" + RESET);
+                switch (command) {
+                    case 1:
+                        generateKeysAndSign();
+                        break;
+                    case 2:
+                        verifySignatures();
+                        break;
+                    case 3:
+                        generateKeysOnly();
+                        break;
+                    case 4:
+                        deleteAllKeys();
+                        break;
+                    case 0:
+                        System.out.println(GREEN + "\n👋 До свидания!" + RESET);
+                        return;
+                    default:
+                        System.out.println(RED + "❌ Неверная команда!" + RESET);
+                }
+
+                System.out.println("\n" + WHITE + "─".repeat(50) + RESET);
+                System.out.print(YELLOW + "Нажмите Enter для продолжения..." + RESET);
+                scanner.nextLine();
             }
 
         } catch (Exception e) {
             System.out.println(RED + "❌ Ошибка: " + e.getMessage() + RESET);
+            e.printStackTrace();
         } finally {
             scanner.close();
         }
     }
 
-    private static void signatureMode() throws Exception {
+    private static void generateKeysAndSign() throws Exception {
         System.out.println(BLUE + "\n" + "🔷".repeat(25));
-        System.out.println("       РЕЖИМ СОЗДАНИЯ ПОДПИСИ");
+        System.out.println("   СОЗДАНИЕ КЛЮЧЕЙ И ПОДПИСИ");
         System.out.println("🔷".repeat(25) + RESET);
 
         System.out.print(WHITE + "Введите путь к файлу для подписи: " + RESET);
@@ -63,40 +83,65 @@ public class Main {
             return;
         }
 
-        System.out.println(WHITE + "📄 Файл для подписи: " + file.getName());
-        System.out.println("📝 Содержимое: " + RED +
-                new String(Files.readAllBytes(file.toPath())).substring(0,
-                        Math.min(50, Files.readAllBytes(file.toPath()).length)) + "..." + WHITE);
+        System.out.println(WHITE + "📄 Файл: " + file.getName());
+        System.out.println("📏 Размер: " + file.length() + " байт" + RESET);
 
-        System.out.println("\n" + "─".repeat(50) + RESET);
+        System.out.println(YELLOW + "\n🔑 Генерация ключей и параметров..." + RESET);
 
-        // Создание подписей
-        System.out.println(BLUE + "\n🔷 АЛГОРИТМ ELGAMAL" + RESET);
+        // ElGamal
+        System.out.println(WHITE + "\n🔷 ELGAMAL:" + RESET);
+        ElGamal.SystemParams elGamalParams;
+        if (KeyManager.systemParamsExist("elgamal")) {
+            elGamalParams = (ElGamal.SystemParams) KeyManager.loadSystemParams("elgamal");
+            System.out.println("   📁 Загружены существующие параметры");
+        } else {
+            elGamalParams = ElGamal.generateSystemParams();
+            KeyManager.saveSystemParams("elgamal", elGamalParams);
+            System.out.println("   ✅ Созданы новые параметры");
+        }
+
         ElGamal elGamal = new ElGamal();
-        ElGamal.SignatureResult elGamalResult = elGamal.signFile(file);
-        saveSignature("elgamal_signature.sig", elGamalResult);
+        ElGamal.KeyPair elGamalKeys = elGamal.generateKeyPair(elGamalParams);
+        KeyManager.saveKeyPair("elgamal", KEY_NAME, elGamalKeys);
+        ElGamal.Signature elGamalSig = elGamal.signFile(file, elGamalKeys);
+        KeyManager.saveSignature("elgamal", file.getName(), elGamalSig);
+        System.out.println("   ✅ Ключи сгенерированы и подпись создана");
 
-        System.out.println(WHITE + "\n⚪ АЛГОРИТМ RSA" + RESET);
+        // RSA
+        System.out.println(WHITE + "\n⚪ RSA:" + RESET);
         RSA rsa = new RSA();
-        RSA.SignatureResult rsaResult = rsa.signFile(file);
-        saveSignature("rsa_signature.sig", rsaResult);
+        RSA.KeyPair rsaKeys = rsa.generateKeyPair();
+        KeyManager.saveKeyPair("rsa", KEY_NAME, rsaKeys);
+        RSA.Signature rsaSig = rsa.signFile(file, rsaKeys);
+        KeyManager.saveSignature("rsa", file.getName(), rsaSig);
+        System.out.println("   ✅ Ключи сгенерированы и подпись создана");
 
-        System.out.println(RED + "\n🔴 АЛГОРИТМ GOST" + RESET);
+        // GOST
+        System.out.println(WHITE + "\n🔴 GOST:" + RESET);
+        GOST.SystemParams gostParams;
+        if (KeyManager.systemParamsExist("gost")) {
+            gostParams = (GOST.SystemParams) KeyManager.loadSystemParams("gost");
+            System.out.println("   📁 Загружены существующие параметры");
+        } else {
+            gostParams = GOST.generateSystemParams();
+            KeyManager.saveSystemParams("gost", gostParams);
+            System.out.println("   ✅ Созданы новые параметры");
+        }
+
         GOST gost = new GOST();
-        GOST.SignatureResult gostResult = gost.signFile(file);
-        saveSignature("gost_signature.sig", gostResult);
+        GOST.KeyPair gostKeys = gost.generateKeyPair(gostParams);
+        KeyManager.saveKeyPair("gost", KEY_NAME, gostKeys);
+        GOST.Signature gostSig = gost.signFile(file, gostKeys);
+        KeyManager.saveSignature("gost", file.getName(), gostSig);
+        System.out.println("   ✅ Ключи сгенерированы и подпись создана");
 
-        System.out.println(GREEN + "\n✅ ВСЕ ПОДПИСИ СОЗДАНЫ И СОХРАНЕНЫ!" + RESET);
-        System.out.println(WHITE + "📁 Файлы подписей:");
-        System.out.println("   - elgamal_signature.sig");
-        System.out.println("   - rsa_signature.sig");
-        System.out.println("   - gost_signature.sig");
-        System.out.println(BLUE + "\n🇷🇺 Данные под защитой Российской Федерации! 🇷🇺" + RESET);
+        System.out.println(GREEN + "\n🎉 ВСЕ ПОДПИСИ УСПЕШНО СОЗДАНЫ!" + RESET);
+        printFileInfo();
     }
 
-    private static void verificationMode() throws Exception {
+    private static void verifySignatures() throws Exception {
         System.out.println(RED + "\n" + "🔍".repeat(25));
-        System.out.println("       РЕЖИМ ПРОВЕРКИ ПОДПИСИ");
+        System.out.println("       ПРОВЕРКА ПОДПИСЕЙ");
         System.out.println("🔍".repeat(25) + RESET);
 
         System.out.print(WHITE + "Введите путь к файлу для проверки: " + RESET);
@@ -108,12 +153,10 @@ public class Main {
             return;
         }
 
-        System.out.println(WHITE + "📄 Проверяемый файл: " + file.getName());
-        System.out.println("📝 Содержимое: " + RED +
-                new String(Files.readAllBytes(file.toPath())).substring(0,
-                        Math.min(50, Files.readAllBytes(file.toPath()).length)) + "..." + WHITE);
+        System.out.println(WHITE + "📄 Файл: " + file.getName());
+        System.out.println("📏 Размер: " + file.length() + " байт" + RESET);
 
-        System.out.println(YELLOW + "\n🔎 Проверяем все доступные подписи..." + RESET);
+        System.out.println(YELLOW + "\n🔎 Проверка подписей..." + RESET);
 
         boolean[] results = new boolean[3];
         String[] algorithms = {"ELGAMAL", "RSA", "GOST"};
@@ -122,16 +165,21 @@ public class Main {
 
         // Проверка ELGAMAL
         try {
-            File sig1 = new File("elgamal_signature.sig");
-            if (sig1.exists()) {
-                ElGamal.SignatureResult elGamalSig = loadSignature("elgamal_signature.sig", ElGamal.SignatureResult.class);
+            if (KeyManager.signatureExists("elgamal", file.getName()) &&
+                    KeyManager.keyExists("elgamal", KEY_NAME)) {
+
+                ElGamal.Signature elGamalSig = (ElGamal.Signature)
+                        KeyManager.loadSignature("elgamal", file.getName());
+                ElGamal.KeyPair elGamalKeys = (ElGamal.KeyPair)
+                        KeyManager.loadKeyPair("elgamal", KEY_NAME);
+
                 ElGamal elGamal = new ElGamal();
-                results[0] = elGamal.verifyFile(file, elGamalSig);
+                results[0] = elGamal.verifyFile(file, elGamalSig, elGamalKeys);
                 statusMessages[0] = results[0] ? "✅ ПОДЛИННА" : "❌ НЕДЕЙСТВИТЕЛЬНА";
-                details[0] = results[0] ? "Надежно как ВДВ!" : "Файл изменен или подпись повреждена!";
+                details[0] = results[0] ? "Надежно как ВДВ!" : "Файл изменен!";
             } else {
                 statusMessages[0] = "⚠️  ОТСУТСТВУЕТ";
-                details[0] = "Файл подписи не найден";
+                details[0] = "Ключи или подпись не найдены";
                 results[0] = false;
             }
         } catch (Exception e) {
@@ -142,16 +190,21 @@ public class Main {
 
         // Проверка RSA
         try {
-            File sig2 = new File("rsa_signature.sig");
-            if (sig2.exists()) {
-                RSA.SignatureResult rsaSig = loadSignature("rsa_signature.sig", RSA.SignatureResult.class);
+            if (KeyManager.signatureExists("rsa", file.getName()) &&
+                    KeyManager.keyExists("rsa", KEY_NAME)) {
+
+                RSA.Signature rsaSig = (RSA.Signature)
+                        KeyManager.loadSignature("rsa", file.getName());
+                RSA.KeyPair rsaKeys = (RSA.KeyPair)
+                        KeyManager.loadKeyPair("rsa", KEY_NAME);
+
                 RSA rsa = new RSA();
-                results[1] = rsa.verifyFile(file, rsaSig);
+                results[1] = rsa.verifyFile(file, rsaSig, rsaKeys.publicKey, rsaKeys.e);
                 statusMessages[1] = results[1] ? "✅ ПОДЛИННА" : "❌ НЕДЕЙСТВИТЕЛЬНА";
-                details[1] = results[1] ? "Крепка как сталь!" : "Файл изменен или подпись повреждена!";
+                details[1] = results[1] ? "Крепка как сталь!" : "Файл изменен!";
             } else {
                 statusMessages[1] = "⚠️  ОТСУТСТВУЕТ";
-                details[1] = "Файл подписи не найден";
+                details[1] = "Ключи или подпись не найдены";
                 results[1] = false;
             }
         } catch (Exception e) {
@@ -162,16 +215,21 @@ public class Main {
 
         // Проверка GOST
         try {
-            File sig3 = new File("gost_signature.sig");
-            if (sig3.exists()) {
-                GOST.SignatureResult gostSig = loadSignature("gost_signature.sig", GOST.SignatureResult.class);
+            if (KeyManager.signatureExists("gost", file.getName()) &&
+                    KeyManager.keyExists("gost", KEY_NAME)) {
+
+                GOST.Signature gostSig = (GOST.Signature)
+                        KeyManager.loadSignature("gost", file.getName());
+                GOST.KeyPair gostKeys = (GOST.KeyPair)
+                        KeyManager.loadKeyPair("gost", KEY_NAME);
+
                 GOST gost = new GOST();
-                results[2] = gost.verifyFile(file, gostSig);
+                results[2] = gost.verifyFile(file, gostSig, gostKeys);
                 statusMessages[2] = results[2] ? "✅ ПОДЛИННА" : "❌ НЕДЕЙСТВИТЕЛЬНА";
-                details[2] = results[2] ? "Соответствует ГОСТу!" : "Файл изменен или подпись повреждена!";
+                details[2] = results[2] ? "Соответствует ГОСТу!" : "Файл изменен!";
             } else {
                 statusMessages[2] = "⚠️  ОТСУТСТВУЕТ";
-                details[2] = "Файл подписи не найден";
+                details[2] = "Ключи или подпись не найдены";
                 results[2] = false;
             }
         } catch (Exception e) {
@@ -183,7 +241,81 @@ public class Main {
         printVerificationResults(results, algorithms, statusMessages, details);
     }
 
-    private static void printVerificationResults(boolean[] results, String[] algorithms, String[] statusMessages, String[] details) {
+    private static void generateKeysOnly() throws Exception {
+        System.out.println(GREEN + "\n" + "🔑".repeat(25));
+        System.out.println("   ГЕНЕРАЦИЯ КЛЮЧЕЙ");
+        System.out.println("🔑".repeat(25) + RESET);
+
+        System.out.println(YELLOW + "\n🔑 Генерация ключей..." + RESET);
+
+        // ElGamal
+        System.out.println(WHITE + "\n🔷 ELGAMAL:" + RESET);
+        ElGamal.SystemParams elGamalParams = ElGamal.generateSystemParams();
+        KeyManager.saveSystemParams("elgamal", elGamalParams);
+        ElGamal elGamal = new ElGamal();
+        ElGamal.KeyPair elGamalKeys = elGamal.generateKeyPair(elGamalParams);
+        KeyManager.saveKeyPair("elgamal", KEY_NAME, elGamalKeys);
+        System.out.println("   ✅ Параметры и ключи сгенерированы");
+
+        // RSA
+        System.out.println(WHITE + "\n⚪ RSA:" + RESET);
+        RSA rsa = new RSA();
+        RSA.KeyPair rsaKeys = rsa.generateKeyPair();
+        KeyManager.saveKeyPair("rsa", KEY_NAME, rsaKeys);
+        System.out.println("   ✅ Ключи сгенерированы");
+
+        // GOST
+        System.out.println(WHITE + "\n🔴 GOST:" + RESET);
+        GOST.SystemParams gostParams = GOST.generateSystemParams();
+        KeyManager.saveSystemParams("gost", gostParams);
+        GOST gost = new GOST();
+        GOST.KeyPair gostKeys = gost.generateKeyPair(gostParams);
+        KeyManager.saveKeyPair("gost", KEY_NAME, gostKeys);
+        System.out.println("   ✅ Параметры и ключи сгенерированы");
+
+        System.out.println(GREEN + "\n🎉 ВСЕ КЛЮЧИ УСПЕШНО СОЗДАНЫ!" + RESET);
+        printFileInfo();
+    }
+
+    private static void deleteAllKeys() throws Exception {
+        System.out.println(RED + "\n" + "🗑️".repeat(25));
+        System.out.println("   УДАЛЕНИЕ КЛЮЧЕЙ И ПОДПИСЕЙ");
+        System.out.println("🗑️".repeat(25) + RESET);
+
+        System.out.print(YELLOW + "Вы уверены? (y/N): " + RESET);
+        String confirmation = scanner.nextLine();
+
+        if (!confirmation.equalsIgnoreCase("y")) {
+            System.out.println(WHITE + "❌ Отменено" + RESET);
+            return;
+        }
+
+        File keysDir = new File("keys/");
+        if (!keysDir.exists()) {
+            System.out.println(WHITE + "ℹ️ Папка keys/ не существует" + RESET);
+            return;
+        }
+
+        int deletedCount = 0;
+        File[] files = keysDir.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                if (file.delete()) {
+                    deletedCount++;
+                }
+            }
+        }
+
+        if (keysDir.delete()) {
+            System.out.println(GREEN + "✅ Папка keys/ удалена" + RESET);
+        }
+
+        System.out.println(WHITE + "🗑️ Удалено файлов: " + deletedCount + RESET);
+        System.out.println(GREEN + "🎉 Все ключи и подписи удалены!" + RESET);
+    }
+
+    private static void printVerificationResults(boolean[] results, String[] algorithms,
+                                                 String[] statusMessages, String[] details) {
         System.out.println(WHITE + "\n" + "═".repeat(60));
         System.out.println("📊 РЕЗУЛЬТАТЫ ПРОВЕРКИ ПОДПИСЕЙ");
         System.out.println("═".repeat(60) + RESET);
@@ -209,38 +341,36 @@ public class Main {
 
         // Статистика
         int validCount = 0;
-        int missingCount = 0;
-        int invalidCount = 0;
-        int errorCount = 0;
-
-        for (String status : statusMessages) {
-            if (status.startsWith("✅")) validCount++;
-            else if (status.startsWith("⚠️")) missingCount++;
-            else if (status.startsWith("❌")) invalidCount++;
-            else if (status.startsWith("💔")) errorCount++;
+        for (boolean result : results) {
+            if (result) validCount++;
         }
 
-        System.out.println(WHITE + "\n📈 СТАТИСТИКА:" + RESET);
-        System.out.println(GREEN + "   ✅ Подлинных подписей: " + validCount + "/3");
-        System.out.println(YELLOW + "   ⚠️  Отсутствующих подписей: " + missingCount + "/3");
-        System.out.println(RED + "   ❌ Недействительных подписей: " + invalidCount + "/3");
-        if (errorCount > 0) {
-            System.out.println(RED + "   💔 Ошибок проверки: " + errorCount + "/3");
-        }
+        System.out.println(WHITE + "\n📈 СТАТИСТИКА: " + validCount + "/3 подписей подлинны" + RESET);
 
         if (validCount == 3) {
             System.out.println(GREEN + "\n🎉 ВСЕ ПОДПИСИ ВЕРНЫ!" + RESET);
-            System.out.println(WHITE + "💪 Данные под защитой Российской Федерации!" + RESET);
-            System.out.println(BLUE + "🇷🇺 СЛАВА РОССИИ! 🇷🇺" + RESET);
+            System.out.println(WHITE + "💪 Файл аутентичен и не изменялся" + RESET);
+            System.out.println(BLUE + "🇷🇺 СЛАВА РОССИЙСКОЙ КРИПТОГРАФИИ! 🇷🇺" + RESET);
         } else if (validCount > 0) {
-            System.out.println(YELLOW + "\n⚠️  ЧАСТИЧНАЯ ЗАЩИТА!" + RESET);
-            System.out.println(WHITE + "🔧 Рекомендуется повторное создание отсутствующих подписей" + RESET);
+            System.out.println(YELLOW + "\n⚠️  ЧАСТИЧНАЯ АУТЕНТИЧНОСТЬ!" + RESET);
+            System.out.println(WHITE + "🔧 Некоторые подписи отсутствуют или недействительны" + RESET);
         } else {
-            System.out.println(RED + "\n🚨 ВНИМАНИЕ! НЕТ ДЕЙСТВИТЕЛЬНЫХ ПОДПИСЕЙ!" + RESET);
-            System.out.println(WHITE + "💀 Файл не защищен или был изменен!" + RESET);
+            System.out.println(RED + "\n🚨 ФАЙЛ НЕ АУТЕНТИЧЕН!" + RESET);
+            System.out.println(WHITE + "💀 Файл был изменен или подписи подделаны!" + RESET);
         }
+    }
 
-        System.out.println(WHITE + "\nРабота завершена с честью и достоинством!" + RESET);
+    private static void printFileInfo() {
+        File keysDir = new File("keys/");
+        if (keysDir.exists()) {
+            File[] files = keysDir.listFiles();
+            if (files != null && files.length > 0) {
+                System.out.println(WHITE + "\n📁 Содержимое папки keys/:" + RESET);
+                for (File file : files) {
+                    System.out.println("   📄 " + file.getName() + " (" + file.length() + " байт)");
+                }
+            }
+        }
     }
 
     private static void printHeader() {
@@ -249,19 +379,7 @@ public class Main {
         System.out.println(RED + "████████████████████████████████████████" + RESET);
         System.out.println(WHITE + "\n🇷🇺  РОССИЙСКАЯ БИБЛИОТЕКА ЭЛЕКТРОННОЙ ПОДПИСИ  🇷🇺" + RESET);
         System.out.println(BLUE + "       Защита данных для величия Родины!" + RESET);
+        System.out.println(WHITE + "           Алгоритмы: ElGamal, RSA, GOST" + RESET);
         System.out.println();
-    }
-
-    private static void saveSignature(String filename, Object signature) throws IOException {
-        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(filename))) {
-            oos.writeObject(signature);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static <T> T loadSignature(String filename, Class<T> clazz) throws IOException, ClassNotFoundException {
-        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(filename))) {
-            return (T) ois.readObject();
-        }
     }
 }

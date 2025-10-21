@@ -1,92 +1,114 @@
 package Laba.Crypto;
-import Laba.Main;
 
 import java.io.*;
 import java.math.BigInteger;
-import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.Random;
 
-public class ElGamal implements Serializable {
-    private transient BigInteger p, g, x, y;
-    private transient Random random = new Random();
+public class ElGamal {
+    private static final Random random = new Random();
 
-    public static class SignatureResult implements Serializable {
-        public BigInteger r;
-        public BigInteger s;
-        public BigInteger p;
-        public BigInteger g;
-        public BigInteger y;
+    public static class SystemParams implements Serializable {
+        public final BigInteger p;
+        public final BigInteger g;
 
-        public SignatureResult(BigInteger r, BigInteger s, BigInteger p, BigInteger g, BigInteger y) {
-            this.r = r;
-            this.s = s;
+        public SystemParams(BigInteger p, BigInteger g) {
             this.p = p;
             this.g = g;
-            this.y = y;
         }
     }
 
-    public ElGamal() {
-        generateKeys();
+    public static class KeyPair implements Serializable {
+        public final BigInteger privateKey;
+        public final BigInteger publicKey;
+        public final SystemParams params;
+
+        public KeyPair(BigInteger privateKey, BigInteger publicKey, SystemParams params) {
+            this.privateKey = privateKey;
+            this.publicKey = publicKey;
+            this.params = params;
+        }
     }
 
-    private void generateKeys() {
-        p = BigInteger.probablePrime(512, random);
-        g = new BigInteger("2");
-        x = new BigInteger(256, random);
-        y = g.modPow(x, p);
+    public static class Signature implements Serializable {
+        public final BigInteger r;
+        public final BigInteger s;
 
-        System.out.println(Main.BLUE + "🇷🇺 Ключи Эль-Гамаля сгенерированы с русской надежностью!" + Main.RESET);
+        public Signature(BigInteger r, BigInteger s) {
+            this.r = r;
+            this.s = s;
+        }
     }
 
-    public SignatureResult signFile(File file) {
-        try {
-            byte[] fileData = Files.readAllBytes(file.toPath());
-            BigInteger m = new BigInteger(1, hash(fileData));
-            BigInteger k;
-            BigInteger r;
-            BigInteger s;
+    // Генерация параметров системы
+    public static SystemParams generateSystemParams() {
+        // Используем надежное простое число
+        BigInteger p = new BigInteger("115792089237316195423570985008687907853269984665640564039457584007913129639319");
+        BigInteger g = new BigInteger("2");
+        return new SystemParams(p, g);
+    }
 
+    // Генерация ключевой пары с заданными параметрами
+    public KeyPair generateKeyPair(SystemParams params) {
+        // Приватный ключ должен быть в диапазоне [2, p-2]
+        BigInteger privateKey = new BigInteger(params.p.bitLength() - 2, random)
+                .add(BigInteger.ONE);
+        BigInteger publicKey = params.g.modPow(privateKey, params.p);
+        return new KeyPair(privateKey, publicKey, params);
+    }
+
+    // Подписание файла
+    public Signature signFile(File file, KeyPair keyPair) throws Exception {
+        byte[] fileData = java.nio.file.Files.readAllBytes(file.toPath());
+        BigInteger hash = new BigInteger(1, hash(fileData));
+
+        BigInteger k, r, s;
+        BigInteger pMinusOne = keyPair.params.p.subtract(BigInteger.ONE);
+
+        do {
+            // k должно быть взаимно просто с p-1
             do {
-                k = new BigInteger(p.bitLength() - 1, random);
-                r = g.modPow(k, p);
-                s = k.modInverse(p.subtract(BigInteger.ONE))
-                        .multiply(m.subtract(x.multiply(r)))
-                        .mod(p.subtract(BigInteger.ONE));
-            } while (s.equals(BigInteger.ZERO));
+                k = new BigInteger(keyPair.params.p.bitLength() - 2, random)
+                        .add(BigInteger.ONE);
+            } while (!k.gcd(pMinusOne).equals(BigInteger.ONE));
 
-            System.out.println(Main.WHITE + "✅ Подпись Эль-Гамаля создана с русской точностью!" + Main.RESET);
-            return new SignatureResult(r, s, p, g, y);
-        } catch (Exception e) {
-            throw new RuntimeException("Ошибка подписи Эль-Гамаля!", e);
-        }
+            r = keyPair.params.g.modPow(k, keyPair.params.p);
+
+            // s = (hash - privateKey * r) * k^(-1) mod (p-1)
+            BigInteger kInv = k.modInverse(pMinusOne);
+            s = hash.subtract(keyPair.privateKey.multiply(r))
+                    .multiply(kInv)
+                    .mod(pMinusOne);
+
+        } while (r.equals(BigInteger.ZERO) || s.equals(BigInteger.ZERO));
+
+        return new Signature(r, s);
     }
 
-    public boolean verifyFile(File file, SignatureResult signature) {
-        try {
-            if (signature.r.compareTo(BigInteger.ONE) < 0 ||
-                    signature.r.compareTo(signature.p) >= 0 ||
-                    signature.s.compareTo(BigInteger.ONE) < 0 ||
-                    signature.s.compareTo(signature.p.subtract(BigInteger.ONE)) >= 0) {
-                return false;
-            }
+    // Проверка подписи
+    public boolean verifyFile(File file, Signature signature, KeyPair keyPair) throws Exception {
+        return verifyFile(file, signature, keyPair.publicKey, keyPair.params);
+    }
 
-            byte[] fileData = Files.readAllBytes(file.toPath());
-            BigInteger m = new BigInteger(1, hash(fileData));
-            BigInteger v1 = signature.y.modPow(signature.r, signature.p)
-                    .multiply(signature.r.modPow(signature.s, signature.p))
-                    .mod(signature.p);
-            BigInteger v2 = signature.g.modPow(m, signature.p);
+    public boolean verifyFile(File file, Signature signature, BigInteger publicKey, SystemParams params) throws Exception {
+        byte[] fileData = java.nio.file.Files.readAllBytes(file.toPath());
+        BigInteger hash = new BigInteger(1, hash(fileData));
 
-            boolean valid = v1.equals(v2);
-            System.out.println(valid ?
-                    Main.WHITE + "🇷🇺 Подпись Эль-Гамаля верифицирована - доверяем как нашему Президенту!" + Main.RESET :
-                    Main.RED + "⚠️ Подпись Эль-Гамаля не прошла проверку - бдительность превыше всего!" + Main.RESET);
-            return valid;
-        } catch (Exception e) {
+        // Проверка диапазонов
+        if (signature.r.compareTo(BigInteger.ONE) < 0 ||
+                signature.r.compareTo(params.p) >= 0 ||
+                signature.s.compareTo(BigInteger.ONE) < 0 ||
+                signature.s.compareTo(params.p.subtract(BigInteger.ONE)) >= 0) {
             return false;
         }
+
+        // Проверка: g^hash ≡ y^r * r^s (mod p)
+        BigInteger left = params.g.modPow(hash, params.p);
+        BigInteger right = publicKey.modPow(signature.r, params.p)
+                .multiply(signature.r.modPow(signature.s, params.p))
+                .mod(params.p);
+
+        return left.equals(right);
     }
 
     private byte[] hash(byte[] message) throws Exception {
